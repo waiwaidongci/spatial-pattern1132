@@ -36,11 +36,23 @@ JWT角色在后端执行，阅读者不能写入，研究员不能审批。未�
 
 ## 六页与五实体
 
-观察总览、网格与邻接、置换配置、聚集证据、补测审阅、研究留痕。`SpatialSurvey / GridCell / NeighborEdge / SpatialRun / SamplingNote` 均贯穿数据库表、model、schema、service、route、前端API、store与页面/组件；另有User/Audit。来源期/数值/边只读核对，格点批注可写，已创建运行使用冻结快照。
+观察总览、网格与邻接、置换配置、聚集证据、补测审阅、研究留痕。`SpatialSurvey / GridCell / NeighborEdge / SpatialRun / SamplingNote` 均贯穿数据库表、model、schema、service、route、前端API、store与页面/组件；另有User/Audit。来源期/数值/边只读核对，格点批注可写，已创建运行使用冻结快照；整期补正走预检→确认并保留批注。
 
-seed三期各8×8=64格，共192格、336条无向rook边（每期112）。`LG-01`含高低块状均值、`LG-02`随机均值、`LG-03`常量边界。生成种子220/221/222，仅作匿名合成研究。自然键为用户email、观测期code、(期,格code)、(期,a,b)及基线运行name；重复seed只补缺失，不新增重复或覆盖用户批注/建议。`SEED_DEMO=true`启动自动执行一次，失败仅记日志，独立seed仍可执行。
+seed三期各8×8=64格，共192格、336条无向rook边（每期112）。`LG-01`含高低块状均值、`LG-02`随机均值、`LG-03`常量边界。生成种子220/221/222，仅作匿名合成研究。自然键为用户email、观测期code、(期,格code)、(期,a,b)及基线运行name；重复seed只补缺失，不新增重复或覆盖用户批注/建议。整期替换批次以一次性令牌与批次指纹为自然键，确认后仍保留批次记录供留痕。`SEED_DEMO=true`启动自动执行一次，失败仅记日志，独立seed仍可执行。
 
 `RunSummary`在首页、结果、审阅复用，`GridMap`在首页、来源、结果复用，此外有SurveySelector、MoranScatter、PermutationPlot及通用DataTable/Notice/StatusBadge。图、散点、零分布、明细全部来自后端数据，前端只负责映射显示。
+
+## 整期替换（预检 → 确认）
+
+`网格与邻接` 页在核对之外提供整期替换：`POST /api/surveys/{id}/replacement/preflight` 只读校验，`POST /api/surveys/{id}/replacement/confirm` 才落库。两者均限 admin/analyst，阅读者连替换记录也不可读（403）。
+
+预检接收完整格点表 `code,row,col,value[,note]` 与无向边表 `a,b`（CSV 导入或直接粘贴）。所有行一次检查并在 `broken_rows` 集中返回：编号/数值/位置非负整数且位置唯一、数值有限且 |值|≤1e9、边端点非空且已知、禁止自环、正反向重复（a↔b 与 b↔a 同一条）合并后不得重复，最后用与统计相同的 `prepare_graph` 检查 4–100 格、无孤点。**任何坏行都会令整批 `status=invalid` 且不写库**；`status=ready` 时返回一次性令牌、批次 SHA256、保留批注计数与增删编号。
+
+批注按格编号保留：同编号沿用来源批注（提交的 note 不再覆盖），新编号使用提交 note，未提交的旧编号视为该格移除。列表顺序与边朝向不影响批次指纹。
+
+确认须带 `{"token": ..., "confirm": true}`：令牌只对产生它的那次预检有效：内容与来源状态都没变的重复预检复用同批次，否则签发新令牌并把旧批次标为 `superseded`。确认时在同一事务内按 `pg_advisory_xact_lock(survey_id)` 串行化（批注写入也取同一把锁），并核对来源格点/位置/数值/批注与规范无向边的整体哈希；预检后任何改动都会令确认 `409`、批次标为 `stale`、整批不落库。已确认批次不可重放，同一期只允许一次确认。
+
+落库是一个事务：删除旧格点与边、写入新格点与边、批次置 `confirmed` 并写审计；任一步失败整体回滚，批次回到 `preflight`，可用原令牌重试。既有 `SpatialRun.input_snapshot / result` 与 `SamplingNote` 保持原样；只有此后创建的研究读取确认后的整期数据（自然键仍为运行 name，重复名请换名）。
 
 ## 统计口径
 
@@ -84,7 +96,7 @@ npm ci
 npm run dev
 ```
 
-`backend/src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}` 按来源/图/统计/运行/建议/横切职责拆分；`backend/scripts/seed_demo.py`；`backend/migrations/001_initial.sql`为可选索引升级，首次schema由SQLAlchemy metadata创建，不是独立全量DDL。`frontend/src/{api,stores,types,components/common,hooks,pages,router,utils,constants}` 为React应用。
+`backend/src/{routes,controllers,services,models,schemas,middlewares,utils,constants,config}` 按来源/图/统计/运行/建议/替换/横切职责拆分；后端替换与并发/回滚测试：`cd backend && pip install pytest httpx && python -m pytest tests/test_replacement.py`（默认 SQLite；设 `DATABASE_URL` 可对 PostgreSQL 跑同一套；并发用例为两线程同令牌确认，回滚用例注入落库中途故障）。`backend/scripts/seed_demo.py`；`backend/migrations/001_initial.sql`为可选索引升级，首次schema由SQLAlchemy metadata创建，不是独立全量DDL。`frontend/src/{api,stores,types,components/common,hooks,pages,router,utils,constants}` 为React应用。
 
 `.env`参数 COMPOSE_PROJECT_NAME、FRONTEND_PORT、BACKEND_PORT、DB_PORT、JWT_SECRET、SEED_DEMO；数据库与Redis连接由Compose定义DATABASE_URL/REDIS_URL。角色枚举在`backend/src/constants/roles.py`与`frontend/src/constants/enums.ts`，被后端路由鉴权和前端角色显示使用；运行状态在`backend/src/constants/status.py`与同一前端enums，被worker及StatusBadge使用；审阅状态在`backend/src/schemas/note.py` Literal、model/service及前端ReviewStatus。
 

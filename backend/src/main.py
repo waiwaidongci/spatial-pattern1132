@@ -5,7 +5,7 @@ from sqlalchemy import text
 from .config.database import Base,engine
 from .config.settings import SEED_DEMO
 from . import models
-from .routes import auth,surveys,cells,edges,runs,notes,audits
+from .routes import auth,surveys,cells,edges,runs,notes,audits,replacements
 from .middlewares.errors import ErrorMiddleware
 from .middlewares.rate_limit import RateLimitMiddleware
 from .services.run_service import queue
@@ -20,7 +20,7 @@ async def lifespan(app):
     yield
 app=FastAPI(title="陇格空间聚集观察席",lifespan=lifespan)
 app.add_middleware(ErrorMiddleware);app.add_middleware(RateLimitMiddleware)
-for module in [auth,surveys,cells,edges,runs,notes,audits]:app.include_router(module.router)
+for module in [auth,surveys,cells,edges,runs,notes,audits,replacements]:app.include_router(module.router)
 @app.get("/health")
 def health():
     with engine.connect() as c:c.execute(text("select 1"))

@@ -5,3 +5,4 @@ from .cell import GridCell
 from .edge import NeighborEdge
 from .spatial_run import SpatialRun
 from .note import SamplingNote
+from .replacement import SurveyReplacement
